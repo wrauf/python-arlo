@@ -7,16 +7,17 @@ from tests.common import (
     load_fixture_json,
     load_camera_live_streaming,
     load_camera_properties as load_camera_props,
+    load_camera_schedule_snapshot,
     open_fixture
 )
 
-from mock import patch
+from mock import patch, MagicMock
 from pyarlo import PyArlo, ArloBaseStation
 from pyarlo.camera import ArloCamera
 from pyarlo.const import (
     DEVICES_ENDPOINT, LIBRARY_ENDPOINT, LOGIN_ENDPOINT,
     NOTIFY_ENDPOINT, RESET_CAM_ENDPOINT, STREAM_ENDPOINT,
-    UNSUBSCRIBE_ENDPOINT
+    UNSUBSCRIBE_ENDPOINT, SNAPSHOTS_ENDPOINT
 )
 
 BASE_STATION_ID = "48B14CBBBBBBB"
@@ -42,6 +43,7 @@ class TestArloCamera(unittest.TestCase):
 
     @requests_mock.Mocker()
     @patch.object(ArloBaseStation, "publish_and_get_event", load_camera_props)
+    @patch.object(ArloBaseStation, "get_ambient_sensor_data", MagicMock())
     def test_camera_properties(self, mock):
         """Test ArloCamera properties."""
         arlo = self.load_arlo(mock)
@@ -61,7 +63,7 @@ class TestArloCamera(unittest.TestCase):
             self.assertEqual(camera.hw_version, "H7")
             self.assertEqual(camera.timezone, "America/New_York")
             self.assertEqual(camera.user_role, "ADMIN")
-            self.assertTrue(len(camera.captured_today), 1)
+            self.assertEqual(len(camera.captured_today), 0)
             self.assertIsNotNone(camera.properties)
             self.assertEqual(camera.base_station, basestation)
 
@@ -149,4 +151,17 @@ class TestArloCamera(unittest.TestCase):
         streaming_url = camera.live_streaming()
         self.assertEqual(
             streaming_url, mocked_streaming_response["data"]["url"]
+        )
+
+    @requests_mock.Mocker()
+    def test_schedule_snapshot(self, mock):
+        """Test ArloCamera.live_streaming."""
+        arlo = self.load_arlo(mock)
+        camera = arlo.cameras[0]
+        response_text = load_fixture("pyarlo_success.json")
+        mock.post(SNAPSHOTS_ENDPOINT, text=response_text)
+        mocked_snapshot_response = load_camera_schedule_snapshot()
+        status = camera.schedule_snapshot()
+        self.assertEqual(
+            status, mocked_snapshot_response["success"]
         )

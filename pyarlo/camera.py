@@ -2,9 +2,11 @@
 """Generic Python Class file for Netgear Arlo camera module."""
 import logging
 from pyarlo.const import (
-    RESET_CAM_ENDPOINT, STREAM_ENDPOINT, STREAMING_BODY)
+    RESET_CAM_ENDPOINT, STREAM_ENDPOINT, STREAMING_BODY,
+    SNAPSHOTS_ENDPOINT, SNAPSHOTS_BODY, PRELOAD_DAYS)
 from pyarlo.media import ArloMediaLibrary
 from pyarlo.utils import http_get
+from pyarlo.utils import assert_is_dict
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -12,26 +14,55 @@ _LOGGER = logging.getLogger(__name__)
 class ArloCamera(object):
     """Arlo Camera module implementation."""
 
-    def __init__(self, name, attrs, arlo_session):
+    def __init__(self, name, attrs, arlo_session,
+                 min_days_vdo_cache=PRELOAD_DAYS):
         """Initialize Arlo camera object.
 
         :param name: Camera name
         :param attrs: Camera attributes
         :param arlo_session: PyArlo shared session
+        :param min_days_vdo_cache: min. days to preload in video cache
         """
         self.name = name
         self._attrs = attrs
         self._session = arlo_session
+        self._cached_videos = None
+        self._min_days_vdo_cache = min_days_vdo_cache
+
+        # make sure self._attrs is a dict
+        self._attrs = assert_is_dict(self._attrs)
 
     def __repr__(self):
         """Representation string of object."""
         return "<{0}: {1}>".format(self.__class__.__name__, self.name)
 
+    @property
+    def attrs(self):
+        """Return device attributes."""
+        return self._attrs
+
+    @attrs.setter
+    def attrs(self, value):
+        """Override device attributes."""
+        self._attrs = value
+
+    @property
+    def min_days_vdo_cache(self):
+        """Return minimal days to lookup when building the video cache."""
+        return self._min_days_vdo_cache
+
+    @min_days_vdo_cache.setter
+    def min_days_vdo_cache(self, value):
+        """Set minimal days to lookup when building the video cache."""
+        self._min_days_vdo_cache = value
+
     # pylint: disable=invalid-name
     @property
     def device_id(self):
         """Return device_id."""
-        return self._attrs.get('deviceId')
+        if self._attrs is not None:
+            return self._attrs.get('deviceId')
+        return None
 
     @property
     def serial_number(self):
@@ -41,42 +72,58 @@ class ArloCamera(object):
     @property
     def device_type(self):
         """Return device_type."""
-        return self._attrs.get('deviceType')
+        if self._attrs is not None:
+            return self._attrs.get('deviceType')
+        return None
 
     @property
     def model_id(self):
         """Return model_id."""
-        return self._attrs.get('modelId')
+        if self._attrs is not None:
+            return self._attrs.get('modelId')
+        return None
 
     @property
     def hw_version(self):
         """Return hardware version."""
-        return self._attrs.get('properties').get('hwVersion')
+        if self._attrs is not None:
+            return self._attrs.get('properties').get('hwVersion')
+        return None
 
     @property
     def parent_id(self):
         """Return camera parentID."""
-        return self._attrs.get('parentId')
+        if self._attrs is not None:
+            return self._attrs.get('parentId')
+        return None
 
     @property
     def timezone(self):
         """Return timezone."""
-        return self._attrs.get('properties').get('olsonTimeZone')
+        if self._attrs is not None:
+            return self._attrs.get('properties').get('olsonTimeZone')
+        return None
 
     @property
     def unique_id(self):
         """Return unique_id."""
-        return self._attrs.get('uniqueId')
+        if self._attrs is not None:
+            return self._attrs.get('uniqueId')
+        return None
 
     @property
     def user_id(self):
         """Return userID."""
-        return self._attrs.get('userId')
+        if self._attrs is not None:
+            return self._attrs.get('userId')
+        return None
 
     @property
     def unseen_videos(self):
         """Return number of unseen videos."""
-        return self._attrs.get('mediaObjectCount')
+        if self._attrs is not None:
+            return self._attrs.get('mediaObjectCount')
+        return None
 
     def unseen_videos_reset(self):
         """Reset the unseen videos counter."""
@@ -87,38 +134,71 @@ class ArloCamera(object):
     @property
     def user_role(self):
         """Return userRole."""
-        return self._attrs.get('userRole')
+        if self._attrs is not None:
+            return self._attrs.get('userRole')
+        return None
 
     @property
     def last_image(self):
-        """Return last image capture by camera."""
-        return http_get(self._attrs.get('presignedLastImageUrl'))
+        """Return last image captured by camera."""
+        if self._attrs is not None:
+            return http_get(self._attrs.get('presignedLastImageUrl'))
+        return None
+
+    @property
+    def last_image_from_cache(self):
+        """
+        Return last thumbnail present in self._cached_images.
+
+        This is useful in Home Assistant when the ArloHub has not
+        updated all information, but the camera.arlo already pulled
+        the last image. Using this method, everything is kept synced.
+        """
+        if self.last_video:
+            return http_get(self.last_video.thumbnail_url)
+        return None
 
     @property
     def last_video(self):
         """Return the last <ArloVideo> object from camera."""
-        library = ArloMediaLibrary(self._session, preload=False)
-        try:
-            return library.load(only_cameras=[self], limit=1)[0]
-        except IndexError:
-            return None
+        if self._cached_videos is None:
+            self.make_video_cache()
 
-    def videos(self, days=180):
+        if self._cached_videos:
+            return self._cached_videos[0]
+        return None
+
+    def make_video_cache(self, days=None):
+        """Save videos on _cache_videos to avoid dups."""
+        if days is None:
+            days = self._min_days_vdo_cache
+        self._cached_videos = self.videos(days)
+
+    def videos(self, days=None):
         """
         Return all <ArloVideo> objects from camera given days range
 
         :param days: number of days to retrieve
         """
+        if days is None:
+            days = self._min_days_vdo_cache
         library = ArloMediaLibrary(self._session, preload=False)
         try:
             return library.load(only_cameras=[self], days=days)
         except (AttributeError, IndexError):
+            # make sure we are returning an empty list istead of None
+            # returning an empty list, cache will be forced only when calling
+            # the update method. Changing this can impact badly
+            # in the Home Assistant performance
             return []
 
     @property
     def captured_today(self):
         """Return list of <ArloVideo> object captured today."""
-        return self.videos(days=0)
+        if self._cached_videos is None:
+            self.make_video_cache()
+
+        return [vdo for vdo in self._cached_videos if vdo.created_today]
 
     def play_last_video(self):
         """Play last <ArloVideo> recorded from camera."""
@@ -128,7 +208,9 @@ class ArloCamera(object):
     @property
     def xcloud_id(self):
         """Return X-Cloud-ID attribute."""
-        return self._attrs.get('xCloudId')
+        if self._attrs is not None:
+            return self._attrs.get('xCloudId')
+        return None
 
     @property
     def base_station(self):
@@ -136,7 +218,7 @@ class ArloCamera(object):
         try:
             return list(filter(lambda x: x.device_id == self.parent_id,
                                self._session.base_stations))[0]
-        except IndexError:
+        except (IndexError, AttributeError):
             return None
 
     def _get_camera_properties(self):
@@ -278,11 +360,57 @@ class ArloCamera(object):
             return ret.get('data').get('url')
         return ret.get('data')
 
+    @property
+    def snapshot_url(self):
+        """Return the snapshot url."""
+        # Snapshot should be scheduled first.  It will
+        # available a couple seconds after.
+        # If a GET request fails on this URL, trying
+        # again is logical since the snapshot isn't
+        # taken immediately.  Snapshots will be cached for a
+        # predefined amount of time.
+        return self._attrs.get('presignedFullFrameSnapshotUrl')
+
+    def schedule_snapshot(self):
+        """Trigger snapshot to be uploaded to AWS.
+        Return success state."""
+        # Notes:
+        #  - Snapshots are not immediate.
+        #  - Snapshots will be cached for predefined amount
+        #    of time.
+        #  - Snapshots are not balanced. To get a better
+        #    image, it must be taken from the stream, a few
+        #    seconds after stream start.
+        url = SNAPSHOTS_ENDPOINT
+        params = SNAPSHOTS_BODY
+        params['from'] = "{0}_web".format(self.user_id)
+        params['to'] = self.device_id
+        params['resource'] = "cameras/{0}".format(self.device_id)
+        params['transId'] = "web!{0}".format(self.xcloud_id)
+
+        # override headers
+        headers = {'xCloudId': self.xcloud_id}
+
+        _LOGGER.debug("Snapshot device %s", self.name)
+        _LOGGER.debug("Device params %s", params)
+        _LOGGER.debug("Device headers %s", headers)
+
+        ret = self._session.query(url,
+                                  method='POST',
+                                  extra_params=params,
+                                  extra_headers=headers)
+
+        _LOGGER.debug("Snapshot results %s", ret)
+
+        return ret is not None and ret.get('success')
+
     def update(self):
         """Update object properties."""
         self._attrs = self._session.refresh_attributes(self.name)
+        self._attrs = assert_is_dict(self._attrs)
 
         # force base_state to update properties
-        self.base_station.update()
+        if self.base_station:
+            self.base_station.update()
 
 # vim:sw=4:ts=4:et:

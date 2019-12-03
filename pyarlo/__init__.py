@@ -64,7 +64,13 @@ class PyArlo(object):
         """Authenticate user and generate token."""
         self.cleanup_headers()
         url = LOGIN_ENDPOINT
-        data = self.query(url, method='POST')
+        data = self.query(
+            url,
+            method='POST',
+            extra_params={
+                'email': self.__username,
+                'password': self.__password
+            })
 
         if isinstance(data, dict) and data.get('success'):
             data = data.get('data')
@@ -82,9 +88,7 @@ class PyArlo(object):
         headers = {'Content-Type': 'application/json'}
         headers['Authorization'] = self.__token
         self.__headers = headers
-
-        params = {'email': self.__username, 'password': self.__password}
-        self.__params = params
+        self.__params = {}
 
     def query(self,
               url,
@@ -185,8 +189,9 @@ class PyArlo(object):
                 camera = ArloCamera(name, device, self)
                 self._all_devices['cameras'].append(camera)
 
-            if device.get('deviceType') == 'basestation' and \
-               device.get('state') == 'provisioned':
+            if (device.get('state') == 'provisioned' and
+                    (device.get('deviceType') == 'basestation' or
+                     device.get('modelId') == 'ABC1000')):
                 base = ArloBaseStation(name, device, self.__token, self)
                 self._all_devices['base_station'].append(base)
 
@@ -198,14 +203,20 @@ class PyArlo(object):
             lambda cam: cam.device_id == device_id, self.cameras))[0]
         if camera:
             return camera
+        return None
 
     def refresh_attributes(self, name):
         """Refresh attributes from a given Arlo object."""
         url = DEVICES_ENDPOINT
-        data = self.query(url).get('data')
-        for device in data:
+        response = self.query(url)
+
+        if not response or not isinstance(response, dict):
+            return None
+
+        for device in response.get('data'):
             if device.get('deviceName') == name:
                 return device
+        return None
 
     @property
     def unseen_videos_reset(self):
@@ -235,8 +246,31 @@ class PyArlo(object):
         """Connection status of client with Arlo system."""
         return bool(self.authenticated)
 
-    def update(self):
+    def update(self, update_cameras=False, update_base_station=False):
         """Refresh object."""
         self._authenticate()
+
+        # update attributes in all cameras to avoid duped queries
+        if update_cameras:
+            url = DEVICES_ENDPOINT
+            response = self.query(url)
+            if not response or not isinstance(response, dict):
+                return
+
+            for camera in self.cameras:
+                for dev_info in response.get('data'):
+                    if dev_info.get('deviceName') == camera.name:
+                        _LOGGER.debug("Refreshing %s attributes", camera.name)
+                        camera.attrs = dev_info
+
+                # preload cached videos
+                # the user is still able to force a new query by
+                # calling the Arlo.video()
+                camera.make_video_cache()
+
+        # force update base_station
+        if update_base_station:
+            for base in self.base_stations:
+                base.update()
 
 # vim:sw=4:ts=4:et:

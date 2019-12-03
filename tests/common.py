@@ -40,9 +40,32 @@ def load_camera_rules(*args, **kwargs):
 
 def load_camera_schedule(*args, **kwargs):
     """Load camera schedule into a dict."""
-    return load_fixture_json("pyarlo_camera_schedule.json")
+    schedule = load_fixture_json("pyarlo_camera_schedule.json")
+    if kwargs.get("active", False):
+        schedule["properties"]["active"] = kwargs["active"]
+    return schedule
 
 
 def load_camera_live_streaming(*args, **kwargs):
     """Load camera live streaming response as dict."""
     return load_fixture_json("pyarlo_camera_live_streaming.json")
+
+
+def load_camera_schedule_snapshot(*args, **kwargs):
+    """Load camera live streaming response as dict."""
+    return load_fixture_json("pyarlo_success.json")
+
+
+def load_ambient_sensor_data(*args, **kwargs):
+    """Load ambient sensor data."""
+    return load_fixture_json("pyarlo_ambient_sensors.json")
+
+
+def load_audio_playback_status(*args, **kwargs):
+    """Load audio playback status."""
+    return load_fixture_json("pyarlo_audio_playback.json")
+
+
+def load_extended_properties(*args, **kwargs):
+    """Load extended camera properties."""
+    return load_fixture_json("pyarlo_extended_properties.json")
